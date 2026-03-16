@@ -1,0 +1,68 @@
+export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
+
+  const API_KEY = process.env.GEMINI_API_KEY;
+  if (!API_KEY) {
+    return res.status(500).json({ error: "GEMINI_API_KEY not set" });
+  }
+
+  const body = req.body;
+  if (!body || !body.messages || !Array.isArray(body.messages)) {
+    return res.status(400).json({ error: "messages array required" });
+  }
+
+  const userMessage = body.messages[body.messages.length - 1].content;
+  const maxTokens = body.max_tokens || 8000;
+
+  try {
+    const apiResponse = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + API_KEY,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: userMessage }] }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: maxTokens,
+            responseMimeType: "application/json"
+          },
+          systemInstruction: {
+            parts: [{ text: "You are a JSON-only API. Always respond with valid JSON only. Never add any text or markdown. Output must be parseable by JSON.parse() directly." }]
+          }
+        })
+      }
+    );
+
+    if (!apiResponse.ok) {
+      const errText = await apiResponse.text();
+      console.error("Gemini error:", apiResponse.status, errText);
+      return res.status(apiResponse.status).json({ error: "Gemini API error: " + apiResponse.status });
+    }
+
+    const data = await apiResponse.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text) {
+      return res.status(500).json({ error: "Empty response from Gemini" });
+    }
+
+    return res.status(200).json({
+      content: [{ type: "text", text: text }]
+    });
+
+  } catch (err) {
+    console.error("Handler error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+}
